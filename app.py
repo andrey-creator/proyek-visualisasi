@@ -1,44 +1,55 @@
+import pandas as pd
 import streamlit as st
-import cv2
-import numpy as np
-from PIL import Image
+import yfinance as yf
+import time
+import plotly.graph_objects as go
 
-# Judul Aplikasi
-st.title("King's Vision: Image Processor")
-st.subheader("Aplikasi pengolah gambar sederhana dengan OpenCV")
+st.set_page_config(page_title="Dashboard Saham King", layout="wide")
 
-# Widget Upload Gambar
-uploaded_file = st.file_uploader("Pilih gambar...", type=["jpg", "jpeg", "png"])
+st.title("📊 Monitor Harga Saham Real-time")
 
-if uploaded_file is not None:
-    # Mengonversi file upload ke format yang dimengerti OpenCV
-    image = Image.open(uploaded_file)
-    img_array = np.array(image)
+st.sidebar.header("Konfigurasi")
+ticker_symbol = st.sidebar.text_input("Simbol Saham", "BBCA.JK")
+refresh_rate = st.sidebar.slider("Refresh (Detik)", 5, 60, 10)
+
+placeholder = st.empty()
+
+def ambil_data(simbol):
+    try:
+        df = yf.download(tickers=simbol, period='1d', interval='1m', progress=False)
+        return df
+    except:
+        return None
+
+while True:
+    df = ambil_data(ticker_symbol)
     
-    # OpenCV menggunakan format BGR, sedangkan PIL menggunakan RGB
-    # Kita perlu konversi agar warnanya tidak aneh
-    img_cv = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
+    if df is not None and not df.empty:
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
 
-    col1, col2 = st.columns(2)
+        harga_sekarang = float(df['Close'].iloc[-1])
+        harga_buka = float(df['Open'].iloc[0])
+        perubahan = harga_sekarang - harga_buka
+        persen = (perubahan / harga_buka) * 100
 
-    with col1:
-        st.image(image, caption="Gambar Asli", use_container_width=True)
+        with placeholder.container():
+            k1, k2, k3 = st.columns(3)
+            fmt = "Rp {:,.0f}" if ".JK" in ticker_symbol else "${:,.2f}"
+            
+            k1.metric(label=f"Harga {ticker_symbol}", value=fmt.format(harga_sekarang), 
+                      delta=f"{perubahan:,.2f} ({persen:.2f}%)")
+            k2.metric("Tertinggi", fmt.format(df['High'].max()))
+            k3.metric("Volume", f"{int(df['Volume'].iloc[-1]):,}")
 
-    # Logika Pengolahan Gambar
-    st.sidebar.header("Pengaturan")
-    mode = st.sidebar.selectbox("Pilih Efek:", ["Original", "Grayscale", "Canny Edge Detection"])
+            fig = go.Figure(data=[go.Candlestick(
+                x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close']
+            )])
+            fig.update_layout(template="plotly_dark", height=400, margin=dict(l=10, r=10, t=10, b=10), xaxis_rangeslider_visible=False)
+            
+            # KUNCI PERBAIKAN: Gunakan key unik dengan time.time()
+            st.plotly_chart(fig, use_container_width=True, key=f"chart_{time.time()}")
+            
+            st.caption(f"Update terakhir: {time.strftime('%H:%M:%S')}")
 
-    if mode == "Grayscale":
-        processed_img = cv2.cvtColor(img_cv, cv2.COLOR_BGR2GRAY)
-        st_image = processed_img # Streamlit bisa baca grayscale langsung
-    elif mode == "Canny Edge Detection":
-        gray = cv2.cvtColor(img_cv, cv2.COLOR_BGR2GRAY)
-        processed_img = cv2.Canny(gray, 100, 200)
-        st_image = processed_img
-    else:
-        st_image = image
-
-    with col2:
-        st.image(st_image, caption=f"Hasil: {mode}", use_container_width=True)
-        
-    st.success("Proses Berhasil!")
+    time.sleep(refresh_rate)
